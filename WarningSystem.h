@@ -20,11 +20,11 @@ public:
                   Buzzer& buzzer)
     : _sensor(sensor), _red(red), _orange(orange), _green(green), _buzzer(buzzer) {}
 
-    // Llamar desde setup() si quieres ajustar valores antes de empezar
+    // Llamar desde setup()
     void begin() {
-        // nada obligatorio aquí; los componentes ya están inicializados
-        applyZone(Z_NONE); // todo apagado hasta primera lectura válida
+        applyZone(Z_NONE);                   // todo apagado hasta primera lectura válida
         _lastEvalMs = millis();
+        _prevEvalMs = _lastEvalMs;
     }
 
     // Actualiza el sistema (no bloqueante). Llamar MUY seguido en loop().
@@ -38,6 +38,9 @@ public:
         // 2) ¿Toca muestrear distancia?
         unsigned long now = millis();
         if (now - _lastEvalMs < _pollPeriodMs) return;
+
+        // Guardamos el instante del muestreo anterior (para calcular reacción)
+        _prevEvalMs = _lastEvalMs;
         _lastEvalMs = now;
 
         // 3) Leer distancia (1 muestra rápida para latencia baja)
@@ -47,8 +50,19 @@ public:
         // 4) Decidir zona con histéresis
         Zone newZone = decideZoneWithHysteresis(d);
 
-        // 5) Si cambió la zona, aplicar LEDs + buzzer
+        // 5) Si cambió la zona, aplicar LEDs + buzzer y calcular tiempo de reacción
         if (newZone != _zone) {
+            // Tiempo de reacción ≈ intervalo entre muestreos (máx ≈ pollPeriodMs)
+            _lastReactionMs = _lastEvalMs - _prevEvalMs;   // manejo seguro de overflow
+            if (_logReactions) {
+                Serial.print("ZONE_CHANGE to ");
+                Serial.print((uint8_t)newZone); // 1=RED, 2=ORANGE, 3=GREEN, 0=NONE
+                Serial.print(" at ms=");
+                Serial.print(_lastEvalMs);
+                Serial.print(" | reaction_ms=");
+                Serial.println(_lastReactionMs);
+            }
+
             applyZone(newZone);
             _zone = newZone;
         }
@@ -75,11 +89,17 @@ public:
         _bzRed = red; _bzOrange = orange; _bzGreen = green;
     }
 
+    // Activar/desactivar logs por Serial cuando cambia la zona
+    void setLogReactions(bool enabled) { _logReactions = enabled; }
+
     // -------- Lecturas / estado --------
     float    lastDistanceCm() const { return _lastDistance; }
-    Zone     zone() const { return _zone; }
-    uint16_t nearThreshold() const { return _thNear; }
-    uint16_t midThreshold()  const { return _thMid;  }
+    Zone     zone()           const { return _zone; }
+    uint16_t nearThreshold()  const { return _thNear; }
+    uint16_t midThreshold()   const { return _thMid;  }
+
+    // Último tiempo de reacción medido (ms)
+    unsigned long lastReactionMs() const { return _lastReactionMs; }
 
 private:
     UltrasonicSensor& _sensor;
@@ -89,9 +109,9 @@ private:
     Buzzer& _buzzer;
 
     // Config por defecto (puedes cambiarlos en setup())
-    uint16_t _thNear = 50;   // < 50 cm => ROJO
-    uint16_t _thMid  = 100;  // [50,100) => NARANJA ; >=100 => VERDE
-    uint8_t  _hys    = 5;    // ±5 cm histéresis
+    uint16_t _thNear = 50;       // < 50 cm => ROJO
+    uint16_t _thMid  = 100;      // [50,100) => NARANJA ; >=100 => VERDE
+    uint8_t  _hys    = 5;        // ±5 cm histéresis
     uint16_t _pollPeriodMs = 50; // 20 Hz decisión
 
     // Perfiles de buzzer por zona (freq y duty)
@@ -102,7 +122,14 @@ private:
     // Estado
     Zone _zone = Z_NONE;
     float _lastDistance = NAN;
-    unsigned long _lastEvalMs = 0;
+
+    // Tiempos
+    unsigned long _prevEvalMs = 0;     // instante del muestreo anterior
+    unsigned long _lastEvalMs = 0;     // instante del muestreo actual
+    unsigned long _lastReactionMs = 0; // tiempo de reacción medido en el último cambio
+
+    // Logging
+    bool _logReactions = true;
 
     Zone decideZoneWithHysteresis(float d) {
         // Si no hay lectura válida: fuera de rango => Z_NONE
@@ -145,12 +172,11 @@ private:
     }
 
     void applyZone(Zone z) {
-        // LEDs
+        // LEDs + Buzzer según zona
         if (z == Z_RED) {
             _red.blink(5.0f);
             _orange.turnOff();
             _green.turnOff();
-            // Buzzer
             _buzzer.setPattern(_bzRed.freqHz, _bzRed.duty);
         }
         else if (z == Z_ORANGE) {

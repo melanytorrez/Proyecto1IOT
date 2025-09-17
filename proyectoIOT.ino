@@ -2,7 +2,7 @@
 #include "Buzzer.h"
 #include "UltrasonicSensor.h"
 #include "WarningSystem.h"
- 
+
 // ==== Pines (ejemplo ESP32) ====
 constexpr uint8_t PIN_TRIG   = 4;
 constexpr uint8_t PIN_ECHO   = 5;
@@ -34,17 +34,32 @@ void setup() {
 }
 
 void loop() {
+  // Mantener sistema en tiempo real (LEDs + buzzer)
   ws.update();
 
-  static unsigned long t0 = 0;
-  if (millis() - t0 > 250) {
-    t0 = millis();
+  // --- LOG periódico de estado ---
+  static unsigned long tLog = 0;
+  if (millis() - tLog >= 500) { // cada 500 ms
+    tLog = millis();
+
     float d = ws.lastDistanceCm();
-    Serial.print("d = ");
+    uint8_t z = ws.zone();
+    unsigned long tr = ws.lastReactionMs();
+
+    Serial.print("Distancia = ");
     if (isnan(d)) Serial.print("NaN");
-    else          Serial.print(d, 1);
-    Serial.print(" cm | zone = ");
-    Serial.println(ws.zone());
+    else Serial.printf("%.1f cm", d);
+
+    Serial.print(" | Zona = ");
+    switch (z) {
+      case WarningSystem::Z_RED:    Serial.print("Rojo"); break;
+      case WarningSystem::Z_ORANGE: Serial.print("Naranja"); break;
+      case WarningSystem::Z_GREEN:  Serial.print("Verde"); break;
+      case WarningSystem::Z_NONE:   Serial.print("None"); break;
+    }
+
+    Serial.print(" | Reaction_ms = ");
+    Serial.println(tr);
   }
 }
 
